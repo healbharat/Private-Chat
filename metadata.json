@@ -1,0 +1,5 @@
+{
+  "name": "Private Chat App",
+  "description": "A private, real-time chat application for two users, simulating a direct messaging experience. Log in as one of two users to send and receive messages in a shared conversation.",
+  "requestFramePermissions": []
+}
