@@ -1,73 +1,95 @@
 import React, { useState, useEffect } from 'react';
+import { ref, onValue, push, off, remove } from 'firebase/database';
+import { database } from './services/firebaseService';
 import { LoginScreen } from './components/LoginScreen';
 import { ChatScreen } from './components/ChatScreen';
 import type { User, Message } from './types';
+import { firebaseConfig } from './firebase-config';
 
-const MESSAGES_STORAGE_KEY = 'private-chat-messages';
-
-const getStoredMessages = (): Message[] => {
-  try {
-    const storedMessages = localStorage.getItem(MESSAGES_STORAGE_KEY);
-    if (storedMessages) {
-      // Parse messages and convert timestamp strings back to Date objects
-      const parsed = JSON.parse(storedMessages) as any[];
-      return parsed.map(msg => ({ ...msg, timestamp: new Date(msg.timestamp) }));
-    }
-  } catch (error) {
-    console.error("Failed to parse messages from localStorage", error);
-    // If parsing fails, clear the corrupted data
-    localStorage.removeItem(MESSAGES_STORAGE_KEY);
-  }
-  return [];
-};
-
+const MESSAGES_DB_KEY = 'messages';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [messages, setMessages] = useState<Message[]>(getStoredMessages);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const messagesRef = ref(database, MESSAGES_DB_KEY);
 
-  // Effect to listen for storage events from other tabs
+  // Check if Firebase config has been updated
+  if (firebaseConfig.apiKey === "YOUR_API_KEY") {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-gray-900 to-black p-4">
+        <div className="w-full max-w-2xl bg-gray-800/50 backdrop-blur-sm rounded-2xl shadow-2xl p-8 border border-red-500 text-center">
+          <h1 className="text-3xl font-bold text-red-400 mb-4">Action Required: Configure Firebase</h1>
+          <p className="text-gray-300 mb-6">
+            This real-time chat application requires a Firebase backend to function. Please follow these steps to set it up.
+          </p>
+          <ol className="text-left text-gray-400 list-decimal list-inside space-y-3 mb-8">
+            <li>Go to the <a href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">Firebase Console</a> and create a new project.</li>
+            <li>In your project, click the Web icon (<code>&lt;/&gt;</code>) to add a Web App and get your configuration credentials.</li>
+            <li>From the menu, go to <strong>Build &gt; Realtime Database</strong>, create a database, and start it in <strong>test mode</strong>.</li>
+            <li>Open the <code className="bg-gray-700 rounded px-1.5 py-1 text-sm text-yellow-300">firebase-config.ts</code> file in this project's code.</li>
+            <li>Copy your unique <code className="bg-gray-700 rounded px-1.5 py-1 text-sm text-yellow-300">firebaseConfig</code> object from the Firebase console and paste it into that file.</li>
+          </ol>
+          <p className="text-gray-500 text-sm">Once the file is saved, the app will be ready to use.</p>
+        </div>
+      </div>
+    );
+  }
+
   useEffect(() => {
-    const handleStorageChange = (event: StorageEvent) => {
-      if (event.key === MESSAGES_STORAGE_KEY) {
-        setMessages(getStoredMessages());
+    // Listener for real-time updates from Firebase
+    const handleNewMessages = (snapshot: any) => {
+      const data = snapshot.val();
+      if (data) {
+        const messagesList: Message[] = Object.keys(data).map(key => ({
+          id: key,
+          ...data[key],
+          timestamp: new Date(data[key].timestamp) // Convert timestamp string back to Date
+        }));
+        // Sort messages by timestamp to ensure correct order
+        messagesList.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+        setMessages(messagesList);
+      } else {
+        setMessages([]);
       }
     };
 
-    window.addEventListener('storage', handleStorageChange);
+    onValue(messagesRef, handleNewMessages);
 
     // Cleanup listener on component unmount
     return () => {
-      window.removeEventListener('storage', handleStorageChange);
+      off(messagesRef, 'value', handleNewMessages);
     };
-  }, []);
+  }, [messagesRef]);
 
   const handleLogin = (user: User) => {
     setCurrentUser(user);
   };
 
   const handleLogout = () => {
-    setCurrentUser(null);
+    if (window.confirm("Are you sure you want to logout? This will permanently delete the chat history for everyone.")) {
+      // Remove the entire 'messages' node from Firebase
+      remove(messagesRef)
+        .catch((error) => {
+          console.error("Error deleting messages:", error);
+          // Still log out the user even if delete fails
+        })
+        .finally(() => {
+          setCurrentUser(null);
+        });
+    }
   };
 
   const handleSendMessage = (text: string) => {
     if (!currentUser) return;
 
-    const newMessage: Message = {
-      id: Date.now().toString(),
+    const newMessage = {
       text,
       sender: currentUser,
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(), // Use ISO string for Firebase compatibility
     };
     
-    // Read the latest messages directly from storage to prevent race conditions
-    const updatedMessages = [...getStoredMessages(), newMessage];
-    
-    // Update state for the current tab
-    setMessages(updatedMessages);
-    
-    // Update localStorage, which will trigger the 'storage' event for other tabs
-    localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(updatedMessages));
+    // Push the new message to Firebase Realtime Database
+    push(messagesRef, newMessage);
   };
 
   return (
